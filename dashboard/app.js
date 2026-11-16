@@ -6,6 +6,8 @@
   if (!R) return;
   var watchlist = {};
   (R.watchlist || []).forEach(function (s) { watchlist[s] = true; });
+  // Rank 1's implied value: every row's bar is drawn against it.
+  var topImplied = R.rows.length ? R.rows[0].implied_value_usd : 1;
 
   function $(id) { return document.getElementById(id); }
   function money(n) {
@@ -89,23 +91,24 @@
     return list;
   }
 
-  /** The first three chains, with a count for the rest: a table cell that lists twelve chains is unreadable. */
+  /** The first two chains, with a count for the rest: a table cell that lists twelve chains is unreadable. */
   function chainList(chains) {
-    var shown = chains.slice(0, 3).map(esc).join(', ');
-    return chains.length > 3 ? shown + ' +' + (chains.length - 3) : shown;
+    var shown = chains.slice(0, 2).map(esc).join(', ');
+    return chains.length > 2 ? shown + ' +' + (chains.length - 2) : shown;
   }
 
   function rowHtml(r) {
     var g = r.change_7d === null ? '' : r.change_7d >= 0 ? 'up' : 'down';
+    var bar = Math.max(2, Math.round((r.implied_value_usd / topImplied) * 100));
     return '<tr data-slug="' + esc(r.slug) + '"' + (state.selected === r.slug ? ' class="selected"' : '') + '>' +
-      '<td class="num">' + r.rank + '</td>' +
+      '<td class="num rank' + (r.rank <= 3 ? ' top3' : '') + '">' + r.rank + '</td>' +
       '<td>' + esc(r.name) + (watchlist[r.slug] ? ' <span class="pill watch">watchlist</span>' : '') + '<br><span class="sym">' + esc(r.slug) + '</span></td>' +
       '<td>' + esc(r.category || '—') + '</td>' +
       '<td>' + chainList(r.chains) + '</td>' +
       '<td class="num">' + money(r.tvl_usd) + '</td>' +
       '<td class="num ' + g + '">' + pct(r.change_7d) + '</td>' +
       '<td class="num">' + age(r.age_days) + '</td>' +
-      '<td class="num"><b>' + money(r.implied_value_usd) + '</b></td></tr>';
+      '<td class="num"><span class="val">' + money(r.implied_value_usd) + '</span><span class="valbar"><span style="width:' + bar + '%"></span></span></td></tr>';
   }
 
   function render() {
@@ -126,10 +129,34 @@
     state.selected = r.slug;
     var mult = r.multiple;
     var base = Math.round(r.tvl_usd * mult);
+    // The multiple's own story: raw median, winsorised, then shrunk toward the global median.
+    var wins = Math.min(R.model.winsor_high, Math.max(R.model.winsor_low, r.category_median));
+    var multCap;
+    if (r.multiple_n === 0) {
+      multCap = 'No live names in this category: the model uses the global median ' + R.global_median.toFixed(3) + '.';
+    } else {
+      multCap = esc(r.category || 'Uncategorised') + ': live median ' + r.category_median.toFixed(3) + ' over ' + r.multiple_n +
+        ' name' + (r.multiple_n === 1 ? '' : 's') + ' → winsorised to ' + wins.toFixed(3) +
+        ' → shrunk toward the global median ' + R.global_median.toFixed(3) + ' (pseudo-count ' + R.model.shrink_k + ').';
+    }
+    var growthCap;
+    if (r.change_7d === null) {
+      growthCap = 'No 7-day change reported: the model uses 0%.';
+    } else if (r.growth_pct !== r.change_7d) {
+      growthCap = '7-day TVL change ' + pct(r.change_7d) + ' → clamped to ' + pct(r.growth_pct) + ' at half weight.';
+    } else {
+      growthCap = '7-day TVL change ' + pct(r.change_7d) + ' at half weight.';
+    }
+    var ageCap = r.age_days === null
+      ? 'Age unknown: the model uses 365 days.'
+      : 'Tracked ' + r.age_days + ' days; maturity rises 0.60 → 1.00 over 3 years.';
+    var chainCap = r.chains.length + ' chain' + (r.chains.length === 1 ? '' : 's') +
+      ': +0.03 per extra chain, capped at +0.12.';
+    var shownChains = r.chains.slice(0, 4).map(function (c) { return '<span class="pill">' + esc(c) + '</span>'; }).join('') +
+      (r.chains.length > 4 ? '<span class="pill">+' + (r.chains.length - 4) + ' more</span>' : '');
     $('detail').innerHTML =
       '<h2>' + esc(r.name) + '</h2>' +
-      '<div>' + (r.category ? '<span class="pill">' + esc(r.category) + '</span>' : '') +
-      r.chains.map(function (c) { return '<span class="pill">' + esc(c) + '</span>'; }).join('') +
+      '<div>' + (r.category ? '<span class="pill">' + esc(r.category) + '</span>' : '') + shownChains +
       (watchlist[r.slug] ? '<span class="pill watch">watchlist</span>' : '') + '</div>' +
       '<div class="facts">' +
       '<div><b>Rank</b>#' + r.rank + ' of ' + R.rows.length + '</div>' +
@@ -138,15 +165,14 @@
       '<div><b>7-day growth</b>' + pct(r.change_7d) + '</div>' +
       '<div><b>Tracked since</b>' + esc(r.listed_at || 'unknown') + ' (' + age(r.age_days) + ')</div>' +
       '<div><b>Token</b>records none</div></div>' +
-      '<h3>How the value is built</h3>' +
-      '<table><tbody>' +
-      '<tr><td>TVL × category multiple</td><td>' + money(r.tvl_usd) + ' × ' + mult.toFixed(3) + ' = ' + money(base) + '</td></tr>' +
-      '<tr><td>Category median (live names)</td><td>' + r.category_median.toFixed(3) + ' over ' + r.multiple_n + ' live</td></tr>' +
-      '<tr><td>Growth multiplier</td><td>× ' + r.growth_multiplier.toFixed(3) + '</td></tr>' +
-      '<tr><td>Maturity multiplier</td><td>× ' + r.maturity_multiplier.toFixed(3) + '</td></tr>' +
-      '<tr><td>Multi-chain multiplier</td><td>× ' + r.chains_multiplier.toFixed(3) + '</td></tr>' +
-      '<tr><td><b>Implied value</b></td><td><b>' + money(r.implied_value_usd) + '</b></td></tr>' +
-      '</tbody></table>' +
+      '<h3>Why this value</h3>' +
+      '<div class="eqn">' + money(r.tvl_usd) + ' × ' + mult.toFixed(3) + ' = ' + money(base) + ' base; × ' +
+      r.growth_multiplier.toFixed(3) + ' × ' + r.maturity_multiplier.toFixed(3) + ' × ' + r.chains_multiplier.toFixed(3) +
+      ' = <b>' + money(r.implied_value_usd) + '</b></div>' +
+      '<div class="factor"><span>Category multiple</span><span class="fval">× ' + mult.toFixed(3) + '</span><span class="cap">' + multCap + '</span></div>' +
+      '<div class="factor"><span>Growth</span><span class="fval">× ' + r.growth_multiplier.toFixed(3) + '</span><span class="cap">' + growthCap + '</span></div>' +
+      '<div class="factor"><span>Maturity</span><span class="fval">× ' + r.maturity_multiplier.toFixed(3) + '</span><span class="cap">' + ageCap + '</span></div>' +
+      '<div class="factor"><span>Multi-chain</span><span class="fval">× ' + r.chains_multiplier.toFixed(3) + '</span><span class="cap">' + chainCap + '</span></div>' +
       '<h3>Farm plan</h3><ol>' + r.farm_steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>' +
       '<p class="warn">This protocol records no token in the snapshot. That is what the data says, not proof it has none — check its own pages before you farm it.</p>';
     render();

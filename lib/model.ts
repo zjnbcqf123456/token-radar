@@ -285,6 +285,7 @@ export interface RadarRow {
   multiple: number;
   multiple_n: number;
   category_median: number;
+  growth_pct: number;
   growth_multiplier: number;
   maturity_multiplier: number;
   chains_multiplier: number;
@@ -507,6 +508,7 @@ export function radarRow(row: BoardRow): RadarRow {
     multiple: row.model.multiple,
     multiple_n: row.model.multiple_n,
     category_median: row.model.category_median,
+    growth_pct: row.model.growth_pct,
     growth_multiplier: row.model.growth_multiplier,
     maturity_multiplier: row.model.maturity_multiplier,
     chains_multiplier: row.model.chains_multiplier,
