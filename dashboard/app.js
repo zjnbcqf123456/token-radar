@@ -20,6 +20,9 @@
     if (n === null || n === undefined) return '—';
     return (n > 0 ? '+' : '') + n.toFixed(1) + '%';
   }
+  // Multipliers are stored to 4 decimals: show them as stored, without trailing zeros,
+  // so the derivation a reader re-multiplies matches the value the model states.
+  function fmtMult(n) { return String(parseFloat(n.toFixed(4))); }
   function age(n) {
     if (n === null || n === undefined) return '—';
     if (n < 365) return n + 'd';
@@ -56,9 +59,22 @@
     'Maturity rises from 0.60 to 1.00 over three years tracked. Multi-chain adds 0.03 per extra chain, up to 0.12.';
   var mrows = (R.multiples || []).slice().sort(function (a, b) { return b.n - a.n || (a.category < b.category ? -1 : 1); });
   $('multipleRows').innerHTML = mrows.map(function (m) {
+    var wins = Math.min(R.model.winsor_high, Math.max(R.model.winsor_low, m.median));
     return '<tr><td>' + esc(m.category) + '</td><td class="num">' + m.n + '</td><td class="num">' +
-      m.median.toFixed(3) + '</td><td class="num">' + m.multiple.toFixed(3) + '</td></tr>';
+      m.median.toFixed(3) + '</td><td class="num">' + wins.toFixed(3) + '</td><td class="num">' + m.multiple.toFixed(3) + '</td></tr>';
   }).join('');
+
+  // Worked example, computed live from the top row: the model page shows the same
+  // derivation the detail view shows, so the formula is never an empty claim.
+  var top = R.rows.length ? R.rows[0] : null;
+  if (top) {
+    var tbase = Math.round(top.tvl_usd * top.multiple);
+    $('workedExample').innerHTML = 'Worked example — the top row, <b>' + esc(top.name) + '</b>: ' +
+      money(top.tvl_usd) + ' × ' + fmtMult(top.multiple) + ' = ' + money(tbase) + ' base; × ' +
+      fmtMult(top.growth_multiplier) + ' × ' + fmtMult(top.maturity_multiplier) + ' × ' +
+      fmtMult(top.chains_multiplier) + ' = <b>' + money(top.implied_value_usd) + '</b>. ' +
+      'Every number above comes from this snapshot, not from a list.';
+  }
 
   // Live tokens.
   $('liveRows').innerHTML = R.live.map(function (p) {
@@ -115,8 +131,14 @@
     var list = filtered();
     $('rows').innerHTML = list.map(rowHtml).join('');
     $('count').textContent = list.length + ' of ' + R.rows.length + ' shown';
+    document.querySelectorAll('#board thead th').forEach(function (th) {
+      var k = th.getAttribute('data-k');
+      th.classList.remove('sorted-asc', 'sorted-desc');
+      if (k === state.sort) th.classList.add(state.sort === 'rank' ? 'sorted-asc' : 'sorted-desc');
+    });
     var showBoard = state.view === 'board';
     $('controls').style.display = showBoard ? '' : 'none';
+    $('boardNote').style.display = showBoard ? '' : 'none';
     $('board').style.display = showBoard ? '' : 'none';
     $('liveWrap').hidden = state.view !== 'live';
     $('modelWrap').hidden = state.view !== 'model';
@@ -138,6 +160,12 @@
       multCap = esc(r.category || 'Uncategorised') + ': live median ' + r.category_median.toFixed(3) + ' over ' + r.multiple_n +
         ' name' + (r.multiple_n === 1 ? '' : 's') + ' → winsorised to ' + wins.toFixed(3) +
         ' → shrunk toward the global median ' + R.global_median.toFixed(3) + ' (pseudo-count ' + R.model.shrink_k + ').';
+      // How much conservatism the shrinkage adds: the base at the raw median, before any guard.
+      if (Math.abs(r.category_median - mult) / mult > 0.05) {
+        multCap += ' At the raw median ' + r.category_median.toFixed(3) + ' the base would be ≈ ' +
+          money(Math.round(r.tvl_usd * r.category_median)) + ' — the model does not let ' +
+          (r.multiple_n === 1 ? 'one live name' : r.multiple_n + ' live names') + ' set the price on its own.';
+      }
     }
     var growthCap;
     if (r.change_7d === null) {
@@ -166,14 +194,23 @@
       '<div><b>Tracked since</b>' + esc(r.listed_at || 'unknown') + ' (' + age(r.age_days) + ')</div>' +
       '<div><b>Token</b>records none</div></div>' +
       '<h3>Why this value</h3>' +
-      '<div class="eqn">' + money(r.tvl_usd) + ' × ' + mult.toFixed(3) + ' = ' + money(base) + ' base; × ' +
-      r.growth_multiplier.toFixed(3) + ' × ' + r.maturity_multiplier.toFixed(3) + ' × ' + r.chains_multiplier.toFixed(3) +
+      '<div class="eqn">' + money(r.tvl_usd) + ' × ' + fmtMult(mult) + ' = ' + money(base) + ' base; × ' +
+      fmtMult(r.growth_multiplier) + ' × ' + fmtMult(r.maturity_multiplier) + ' × ' + fmtMult(r.chains_multiplier) +
       ' = <b>' + money(r.implied_value_usd) + '</b></div>' +
-      '<div class="factor"><span>Category multiple</span><span class="fval">× ' + mult.toFixed(3) + '</span><span class="cap">' + multCap + '</span></div>' +
-      '<div class="factor"><span>Growth</span><span class="fval">× ' + r.growth_multiplier.toFixed(3) + '</span><span class="cap">' + growthCap + '</span></div>' +
-      '<div class="factor"><span>Maturity</span><span class="fval">× ' + r.maturity_multiplier.toFixed(3) + '</span><span class="cap">' + ageCap + '</span></div>' +
-      '<div class="factor"><span>Multi-chain</span><span class="fval">× ' + r.chains_multiplier.toFixed(3) + '</span><span class="cap">' + chainCap + '</span></div>' +
-      '<h3>Farm plan</h3><ol>' + r.farm_steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>' +
+      // The audit trail: the running value after each factor, so a reader can re-multiply it.
+      '<div class="chain">' +
+      '<div><span>Base · TVL × multiple</span><span class="cmult">× ' + fmtMult(mult) + '</span><span class="cval">' + money(base) + '</span></div>' +
+      '<div><span>Growth</span><span class="cmult">× ' + fmtMult(r.growth_multiplier) + '</span><span class="cval">' + money(base * r.growth_multiplier) + '</span></div>' +
+      '<div><span>Maturity</span><span class="cmult">× ' + fmtMult(r.maturity_multiplier) + '</span><span class="cval">' + money(base * r.growth_multiplier * r.maturity_multiplier) + '</span></div>' +
+      '<div><span>Multi-chain</span><span class="cmult">× ' + fmtMult(r.chains_multiplier) + '</span><span class="cval">' + money(r.implied_value_usd) + '</span></div></div>' +
+      '<p class="note">Running totals use the multipliers as shown; the last figure is the model’s exact implied value.</p>' +
+      '<div class="factor"><span>Category multiple</span><span class="fval">× ' + fmtMult(mult) + '</span><span class="cap">' + multCap + '</span></div>' +
+      '<div class="factor"><span>Growth</span><span class="fval">× ' + fmtMult(r.growth_multiplier) + '</span><span class="cap">' + growthCap + '</span></div>' +
+      '<div class="factor"><span>Maturity</span><span class="fval">× ' + fmtMult(r.maturity_multiplier) + '</span><span class="cap">' + ageCap + '</span></div>' +
+      '<div class="factor"><span>Multi-chain</span><span class="fval">× ' + fmtMult(r.chains_multiplier) + '</span><span class="cap">' + chainCap + '</span></div>' +
+      '<h3>Farm plan</h3><ol>' + r.farm_steps.map(function (s) {
+        return '<li>' + esc(s).replace(' Cost: ', ' <b>Cost:</b> ').replace(' Time: ', ' <b>Time:</b> ') + '</li>';
+      }).join('') + '</ol>' +
       '<p class="warn">This protocol records no token in the snapshot. That is what the data says, not proof it has none — check its own pages before you farm it.</p>';
     render();
   }

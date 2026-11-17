@@ -27,6 +27,16 @@ h2 { font-size: 19px; margin: 22px 0 8px; }
 .count { margin-left: auto; color: var(--muted); font-size: 13px; }
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 20px; padding: 0 28px 20px; align-items: start; }
 table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: var(--radius); overflow: hidden; font-size: 14px; }
+/* The board keeps its header visible while 198 rows scroll past: the wrapper carries the
+   panel background, the table itself stays transparent so the sticky header can move. */
+.tablewrap { background: var(--panel); border-radius: var(--radius); }
+#board { background: none; border-radius: 0; overflow: visible; }
+#board thead th { position: sticky; top: 0; z-index: 2; }
+#board thead th:first-child { border-radius: 10px 0 0 0; }
+#board thead th:last-child { border-radius: 0 10px 0 0; }
+th.sorted-asc, th.sorted-desc { color: var(--amber); }
+th.sorted-asc::after { content: " ↑"; }
+th.sorted-desc::after { content: " ↓"; }
 th, td { padding: 9px 10px; text-align: left; border-bottom: 1px solid var(--line); }
 thead th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; cursor: pointer; background: var(--panel2); white-space: nowrap; }
 tbody tr { cursor: pointer; }
@@ -54,9 +64,16 @@ td .val { display: block; font-size: 15px; font-weight: 700; font-variant-numeri
 .detail table td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
 .detail ol { margin: 6px 0; padding-left: 20px; font-size: 14px; }
 .detail ol li { margin-bottom: 9px; }
+.detail ol li b { color: var(--amber); }
 .detail .warn { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 10px; }
 .eqn { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 14px; line-height: 1.6; font-variant-numeric: tabular-nums; margin: 8px 0 4px; }
 .eqn b { color: var(--amber); }
+/* The derivation as an audit trail: one row per factor, the running value after each. */
+.chain { margin: 8px 0 4px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.chain > div { display: grid; grid-template-columns: 1fr auto auto; gap: 2px 12px; padding: 7px 12px; font-size: 13px; border-bottom: 1px solid var(--line); align-items: baseline; }
+.chain > div:last-child { border-bottom: 0; background: var(--amber-soft); }
+.chain .cmult { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.chain .cval { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .factor { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
 .factor:last-child { border-bottom: 0; }
 .factor .fval { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; }
