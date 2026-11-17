@@ -49,7 +49,7 @@
       <tbody id="rows"></tbody>
     </table>
     </div>
-    <p class="note" id="boardNote">Every row records no token in the snapshot. “Records no token” is what the data says — a protocol on this board may still have a token its record does not carry. Each value is TVL × the category’s live median market-cap/TVL, adjusted for growth, age and chains — see the How it scores tab for the method and a worked example.</p>
+    <p class="note" id="boardNote">Every row records no token in the snapshot. “Records no token” is what the data says — a protocol on this board may still have a token its record does not carry. Each value is fitted from the live protocols that already trade: log(market cap) = a + b·log(TVL) + a category effect, tested out of sample — see the How it scores tab for the method, the test and a worked example.</p>
     <section id="liveWrap" hidden>
       <h2>Live tokens — the market's own values</h2>
       <p class="sub">These protocols already trade. The board never ranks them by a model; their market caps are shown as the market states them.</p>
@@ -64,14 +64,15 @@
       <h2>How the radar scores</h2>
       <div id="methodBlock"></div>
       <p id="modelText"></p>
+      <p id="validationText"></p>
       <div class="tablewrap">
       <table id="multiples">
-        <thead><tr><th>Category</th><th>Live names</th><th>Category median mcap / TVL</th><th>Middle 50%</th><th>Winsorised</th><th>Multiple used</th><th>Confidence</th></tr></thead>
+        <thead><tr><th>Category</th><th>Live names</th><th>Category median mcap / TVL</th><th>Middle 50%</th><th>Fitted effect</th><th>Fitted multiple at $100M TVL</th><th>Confidence</th></tr></thead>
         <tbody id="multipleRows"></tbody>
       </table>
       </div>
       <p class="eqn" id="workedExample"></p>
-      <p class="note">Multiples come from the snapshot itself: each category's median market-cap-per-TVL over its live protocols, winsorised to 0.02–1.00 and shrunk toward the global median with a pseudo-count of 10, so one live name cannot set its category's price. A category with no live names uses the global median. No protocol name is ever special-cased.</p>
+      <p class="note">The fit comes from the snapshot itself: every live protocol's market cap and TVL, one regression, no hand-written list. The median and middle-50% columns are the category's live ratios for context; the fitted effect is what the regression gives that category (only where five or more live names back it), and the fitted multiple at $100M TVL is the rate the fit implies for a protocol of that size. A category with fewer than five live names takes the intercept — the model admits it does not know that category's premium.</p>
     </section>
   </section>
 

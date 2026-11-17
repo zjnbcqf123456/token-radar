@@ -20,9 +20,6 @@
     if (n === null || n === undefined) return '—';
     return (n > 0 ? '+' : '') + n.toFixed(1) + '%';
   }
-  // Multipliers are stored to 4 decimals: show them as stored, without trailing zeros,
-  // so the derivation a reader re-multiplies matches the value the model states.
-  function fmtMult(n) { return String(parseFloat(n.toFixed(4))); }
   function age(n) {
     if (n === null || n === undefined) return '—';
     if (n < 365) return n + 'd';
@@ -50,46 +47,47 @@
     var o = document.createElement('option'); o.value = c; o.textContent = c; $('category').appendChild(o);
   });
 
-  // Method in plain words, with live counts: how many categories rest on thin evidence.
+  // Method in plain words: a regression fitted on the live protocols, tested out of sample.
+  var f = R.fit;
   var thinCats = (R.multiples || []).filter(function (m) { return m.n < 5; }).length;
   var catCount = (R.multiples || []).length;
+  var maxCatT = Math.max.apply(null, f.categories.map(function (c) { return Math.abs(c.t); }));
   $('methodBlock').innerHTML =
     '<h3>How a value is made</h3>' +
     '<ol class="method-steps">' +
-    '<li><b>Start with TVL</b> — the money actually sitting in the protocol today, from the snapshot.</li>' +
-    '<li><b>Price each dollar of TVL at the going rate for its category</b> — the median market-cap-per-TVL of the live, already-trading protocols in that same category. When a category has few live names, the rate is pulled toward the global median (' + R.global_median.toFixed(3) + '), so a thin category cannot invent a rich price.</li>' +
-    '<li><b>Adjust for what the snapshot says about this protocol</b> — 7-day TVL growth at half weight and clamped, how long it has been tracked (older counts for more), and how many chains it runs on (a little per extra chain).</li>' +
-    '<li><b>The result is the implied value</b> — what the token would be worth if it launched today at its category\u2019s market price. It is a median case, not a promise: the middle half of the category\u2019s live multiples gives the low–high band shown on each protocol.</li></ol>' +
-    '<p class="note">What would change a number: fresh TVL, new live names in the category, another birthday, another chain. Nothing else — no team promises, no social buzz, no hand-written list. ' +
+    '<li><b>Learn from the protocols that already trade.</b> The snapshot holds ' + f.n_refs + ' live protocols with a market cap and a TVL. The model fits one regression on them: log(market cap) = ' + f.intercept.toFixed(2) + ' + ' + f.slope_log_tvl.toFixed(2) + ' × log(TVL) + a category effect.</li>' +
+    '<li><b>Value grows slower than TVL.</b> The fitted slope is ' + f.slope_log_tvl.toFixed(2) + ', not 1: a protocol with ten times the TVL is priced at about ' + Math.pow(10, f.slope_log_tvl).toFixed(1) + ' times the value, not ten times. That is what the live names show — and it is why the old median multiple, which priced every dollar of TVL the same, is gone.</li>' +
+    '<li><b>Categories nudge the price; thin ones do not.</b> Only categories with five or more live names get their own effect; the rest share the intercept. No category effect is statistically strong — the largest t is ' + maxCatT.toFixed(2) + ' — so the effects are small nudges, not the story.</li>' +
+    '<li><b>Test it on protocols the fit never saw.</b> Fit on the live protocols listed before ' + f.holdout.split_date + ', predict the ' + f.holdout.n_test + ' listed after: the average miss is ' + f.holdout.mae.toFixed(2) + ' log points (about ' + Math.exp(f.holdout.mae).toFixed(1) + '×), the median miss ' + f.holdout.median_abs_err.toFixed(2) + ' (about ' + Math.exp(f.holdout.median_abs_err).toFixed(1) + '×). The naive median-multiple price misses by more (' + f.baseline_holdout.mae.toFixed(2) + ' log points), so the fit is better — and still weak in absolute terms. Every row carries the holdout band, not just the point.</li></ol>' +
+    '<p class="note">What would change a number: fresh TVL, new live names, a new fit. Growth, age and chain count were tested and left out — they do not predict out of sample (see below). Nothing else — no team promises, no social buzz, no hand-written list. ' +
     thinCats + ' of ' + catCount + ' categories rest on fewer than five live names; the table below marks them Low.</p>';
 
-  // Model explainer.
+  // Model explainer: the fitted equation and its numbers, then the validation.
   $('modelText').textContent =
-    'Implied value = TVL × category multiple × growth × maturity × chains. The category multiple is the median ' +
-    'market-cap-per-TVL of that category\u2019s live protocols in this same snapshot (global median $' +
-    R.global_median.toFixed(3) + ' per $1 of TVL where a category has no live names), winsorised to 0.02–1.00 and ' +
-    'shrunk toward the global median. Growth is the 7-day TVL change, clamped to −60…+120% at half weight. ' +
-    'Maturity rises from 0.60 to 1.00 over three years tracked. Multi-chain adds 0.03 per extra chain, up to 0.12.';
+    'log(market cap) = ' + f.intercept.toFixed(4) + ' + ' + f.slope_log_tvl.toFixed(4) + ' × log(TVL) + category effect, fitted by least squares on the ' + f.n_refs + ' live protocols in this snapshot (exchanges left out). Only the log-TVL slope is statistically strong (t = ' + f.slope_t.toFixed(2) + '); no category effect reaches |t| = 1.3. In-sample R² = ' + f.r2.toFixed(3) + ', residual σ = ' + f.sigma.toFixed(2) + ' log points.';
+  $('validationText').textContent =
+    'Out of sample — fit on the ' + f.holdout.n_train + ' live protocols listed before ' + f.holdout.split_date + ', predicted the ' + f.holdout.n_test + ' listed after: R² = ' + f.holdout.r2.toFixed(2) + ', mean absolute error ' + f.holdout.mae.toFixed(2) + ' log points, median ' + f.holdout.median_abs_err.toFixed(2) + '; the 50% and 80% bands cover ' + Math.round(f.holdout.coverage50 * 100) + '% and ' + Math.round(f.holdout.coverage80 * 100) + '% of the holdout. Five-fold cross-check: mean absolute error ' + f.cv.mae_mean.toFixed(2) + ', R² ' + f.cv.r2_mean.toFixed(2) + '. ' +
+    'Growth, age and chain count were fitted and rejected: their t values are ' + f.tested.growth_t.toFixed(2) + ', ' + f.tested.age_t.toFixed(2) + ' and ' + f.tested.chains_t.toFixed(2) + ', and adding them makes the holdout error worse (R² ' + f.holdout_full.r2.toFixed(2) + ', error ' + f.holdout_full.mae.toFixed(2) + '). The median-multiple baseline on the same split scores R² ' + f.baseline_holdout.r2.toFixed(2) + ' with error ' + f.baseline_holdout.mae.toFixed(2) + '.';
   var mrows = (R.multiples || []).slice().sort(function (a, b) { return b.n - a.n || (a.category < b.category ? -1 : 1); });
   $('multipleRows').innerHTML = mrows.map(function (m) {
-    var wins = Math.min(R.model.winsor_high, Math.max(R.model.winsor_low, m.median));
     // The spread is the middle half of the category's live ratios — shown only where five or
     // more names make quartiles mean something; fewer than five is flagged Low instead.
     var spread = m.n >= 5 ? m.q1.toFixed(3) + '–' + m.q3.toFixed(3) : '—';
+    var eff = m.n >= 5 ? (m.effect >= 0 ? '+' : '') + m.effect.toFixed(2) : '—';
     var conf = m.n < 5 ? '<span class="lowconf">Low</span>' : '—';
     return '<tr><td>' + esc(m.category) + '</td><td class="num">' + m.n + '</td><td class="num">' +
-      m.median.toFixed(3) + '</td><td class="num">' + spread + '</td><td class="num">' + wins.toFixed(3) + '</td><td class="num">' + m.multiple.toFixed(3) + '</td><td>' + conf + '</td></tr>';
+      m.median.toFixed(3) + '</td><td class="num">' + spread + '</td><td class="num">' + eff + '</td><td class="num">' + m.fitted_multiple_100m.toFixed(3) + '</td><td>' + conf + '</td></tr>';
   }).join('');
 
   // Worked example, computed live from the top row: the model page shows the same
   // derivation the detail view shows, so the formula is never an empty claim.
   var top = R.rows.length ? R.rows[0] : null;
   if (top) {
-    var tbase = Math.round(top.tvl_usd * top.multiple);
     $('workedExample').innerHTML = 'Worked example — the top row, <b>' + esc(top.name) + '</b>: ' +
-      money(top.tvl_usd) + ' × ' + fmtMult(top.multiple) + ' = ' + money(tbase) + ' base; × ' +
-      fmtMult(top.growth_multiplier) + ' × ' + fmtMult(top.maturity_multiplier) + ' × ' +
-      fmtMult(top.chains_multiplier) + ' = <b>' + money(top.implied_value_usd) + '</b>. ' +
+      'log(value) = ' + top.intercept.toFixed(2) + ' + ' + top.slope_log_tvl.toFixed(2) + ' × ' + top.log_tvl.toFixed(2) +
+      ' ' + (top.category_effect >= 0 ? '+ ' : '− ') + Math.abs(top.category_effect).toFixed(2) + ' = ' + top.fitted_log_mcap.toFixed(2) +
+      '; exp(' + top.fitted_log_mcap.toFixed(2) + ') = <b>' + money(top.implied_value_usd) + '</b>. ' +
+      'The holdout band for this row runs ' + money(top.implied_low_usd) + '–' + money(top.implied_high_usd) + '. ' +
       'Every number above comes from this snapshot, not from a list.';
   }
 
@@ -166,45 +164,18 @@
 
   function detail(r) {
     state.selected = r.slug;
-    var mult = r.multiple;
-    var base = Math.round(r.tvl_usd * mult);
-    // The multiple's own story: raw median, winsorised, then shrunk toward the global median.
-    var wins = Math.min(R.model.winsor_high, Math.max(R.model.winsor_low, r.category_median));
-    var multCap;
-    if (r.multiple_n === 0) {
-      multCap = 'No live names in this category: the model uses the global median ' + R.global_median.toFixed(3) + '.';
+    // The fitted derivation, in log space: intercept + slope × log(TVL) + category effect.
+    var effectCap;
+    if (r.category_n === 0) {
+      effectCap = 'No fitted effect for ' + esc(r.category || 'Uncategorised') + ': fewer than five live names in this category, so the row takes the intercept — the model admits it does not know this category\u2019s premium.';
     } else {
-      multCap = esc(r.category || 'Uncategorised') + ': live median ' + r.category_median.toFixed(3) + ' over ' + r.multiple_n +
-        ' name' + (r.multiple_n === 1 ? '' : 's') + ' → winsorised to ' + wins.toFixed(3) +
-        ' → shrunk toward the global median ' + R.global_median.toFixed(3) + ' (pseudo-count ' + R.model.shrink_k + ').';
-      // How much of the applied multiple is this category's own evidence, and how much is the prior.
-      var liveShare = Math.round((r.multiple_n / (r.multiple_n + R.model.shrink_k)) * 100);
-      multCap += ' The applied ' + fmtMult(mult) + ' is ' + liveShare + '% this category and ' + (100 - liveShare) + '% global median.';
-      if (r.multiple_n >= 5) {
-        multCap += ' Live multiples in this category run ' + r.category_q1.toFixed(3) + '–' + r.category_q3.toFixed(3) + ' for the middle half.';
-      } else {
-        multCap += ' Only ' + r.multiple_n + ' live name' + (r.multiple_n === 1 ? '' : 's') + ' back' + (r.multiple_n === 1 ? 's' : '') + ' this multiple — treat the value as a rough estimate, not a precise price.';
-      }
-      // How much conservatism the shrinkage adds: the base at the raw median, before any guard.
-      if (Math.abs(r.category_median - mult) / mult > 0.05) {
-        multCap += ' At the raw median ' + r.category_median.toFixed(3) + ' the base would be ≈ ' +
-          money(Math.round(r.tvl_usd * r.category_median)) + ' — the model does not let ' +
-          (r.multiple_n === 1 ? 'one live name' : r.multiple_n + ' live names') + ' set the price on its own.';
-      }
+      effectCap = esc(r.category || 'Uncategorised') + ': ' + r.category_n + ' live names, fitted effect ' +
+        (r.category_effect >= 0 ? '+' : '') + r.category_effect.toFixed(2) + ' log points. No category effect is statistically strong, so this is a small nudge, not the story.';
     }
-    var growthCap;
-    if (r.change_7d === null) {
-      growthCap = 'No 7-day change reported: the model uses 0%.';
-    } else if (r.growth_pct !== r.change_7d) {
-      growthCap = '7-day TVL change ' + pct(r.change_7d) + ' → clamped to ' + pct(r.growth_pct) + ' at half weight.';
-    } else {
-      growthCap = '7-day TVL change ' + pct(r.change_7d) + ' at half weight.';
-    }
-    var ageCap = r.age_days === null
-      ? 'Age unknown: the model uses 365 days.'
-      : 'Tracked ' + r.age_days + ' days; maturity rises 0.60 → 1.00 over 3 years.';
-    var chainCap = r.chains.length + ' chain' + (r.chains.length === 1 ? '' : 's') +
-      ': +0.03 per extra chain, capped at +0.12.';
+    var tvlCap = 'TVL ' + money(r.tvl_usd) + ', log(TVL) = ' + r.log_tvl.toFixed(2) + '; at the fitted slope ' + r.slope_log_tvl.toFixed(2) +
+      ' this contributes ' + (r.slope_log_tvl * r.log_tvl).toFixed(2) + ' log points — value grows slower than TVL.';
+    var leftOutCap = 'Growth (' + pct(r.change_7d) + ' over 7 days) and age (' + age(r.age_days) + ') are shown, not used: the fit tested them and they do not predict out of sample (t = ' +
+      R.fit.tested.growth_t.toFixed(2) + ' and ' + R.fit.tested.age_t.toFixed(2) + '), so the model leaves them out rather than pretend they help.';
     var shownChains = r.chains.slice(0, 4).map(function (c) { return '<span class="pill">' + esc(c) + '</span>'; }).join('') +
       (r.chains.length > 4 ? '<span class="pill">+' + (r.chains.length - 4) + ' more</span>' : '');
     // Cautions from this row's own record, never from a guess: a sharp TVL fall, or a young
@@ -217,13 +188,16 @@
       warnNotes.push('Tracked under 180 days — a new listing: confirm the contracts are the protocol\u2019s own before depositing.');
     }
     warnNotes.push('This protocol records no token in the snapshot. That is what the data says, not proof it has none — check its own pages before you farm it.');
-    // The band, not just the point: the value at the category's lower and upper quartiles.
+    // The band, not just the point: the holdout test's 10th–90th percentile errors, applied to
+    // this row's fitted value. The point is a ranking device, not a price.
     var rangeLine = '';
     if (r.implied_low_usd !== null && r.implied_high_usd !== null && r.implied_low_usd < r.implied_high_usd) {
-      rangeLine = '<p class="range">At the middle half of this category\u2019s live multiples, the value would run ' +
+      rangeLine = '<p class="range">The holdout band for this row runs ' +
         money(r.implied_low_usd) + '–' + money(r.implied_high_usd) + ' — ' + money(r.implied_value_usd) +
-        ' above is the median case.</p>';
+        ' above is the fitted point, a ranking device, not a price.</p>';
     }
+    var effSign = r.category_effect >= 0 ? '+ ' : '− ';
+    var tvlTerm = r.slope_log_tvl * r.log_tvl;
     $('detail').innerHTML =
       '<h2>' + esc(r.name) + '</h2>' +
       '<div>' + (r.category ? '<span class="pill">' + esc(r.category) + '</span>' : '') + shownChains +
@@ -231,25 +205,25 @@
       '<div class="facts">' +
       '<div><b>Rank</b>#' + r.rank + ' of ' + R.rows.length + '</div>' +
       '<div><b>Implied value</b>' + money(r.implied_value_usd) + '</div>' +
+      '<div><b>Fitted band</b>' + money(r.implied_low_usd) + '–' + money(r.implied_high_usd) + '</div>' +
       '<div><b>TVL</b>' + money(r.tvl_usd) + '</div>' +
       '<div><b>7-day growth</b>' + pct(r.change_7d) + '</div>' +
       '<div><b>Tracked since</b>' + esc(r.listed_at || 'unknown') + ' (' + age(r.age_days) + ')</div>' +
       '<div><b>Token</b>records none</div></div>' +
       '<h3>Why this value</h3>' +
-      '<div class="eqn">' + money(r.tvl_usd) + ' × ' + fmtMult(mult) + ' = ' + money(base) + ' base; × ' +
-      fmtMult(r.growth_multiplier) + ' × ' + fmtMult(r.maturity_multiplier) + ' × ' + fmtMult(r.chains_multiplier) +
-      ' = <b>' + money(r.implied_value_usd) + '</b></div>' + rangeLine +
-      // The audit trail: the running value after each factor, so a reader can re-multiply it.
+      '<div class="eqn">log(value) = ' + r.intercept.toFixed(2) + ' + ' + r.slope_log_tvl.toFixed(2) + ' × ' + r.log_tvl.toFixed(2) +
+      ' ' + effSign + Math.abs(r.category_effect).toFixed(2) + ' = ' + r.fitted_log_mcap.toFixed(2) +
+      '; exp(' + r.fitted_log_mcap.toFixed(2) + ') = <b>' + money(r.implied_value_usd) + '</b></div>' + rangeLine +
+      // The audit trail: the running log value after each term, so a reader can re-add it.
       '<div class="chain">' +
-      '<div><span>Base · TVL × multiple</span><span class="cmult">× ' + fmtMult(mult) + '</span><span class="cval">' + money(base) + '</span></div>' +
-      '<div><span>Growth</span><span class="cmult">× ' + fmtMult(r.growth_multiplier) + '</span><span class="cval">' + money(base * r.growth_multiplier) + '</span></div>' +
-      '<div><span>Maturity</span><span class="cmult">× ' + fmtMult(r.maturity_multiplier) + '</span><span class="cval">' + money(base * r.growth_multiplier * r.maturity_multiplier) + '</span></div>' +
-      '<div><span>Multi-chain</span><span class="cmult">× ' + fmtMult(r.chains_multiplier) + '</span><span class="cval">' + money(r.implied_value_usd) + '</span></div></div>' +
-      '<p class="note">Running totals use the multipliers as shown; the last figure is the model’s exact implied value.</p>' +
-      '<div class="factor"><span>Category multiple</span><span class="fval">× ' + fmtMult(mult) + '</span><span class="cap">' + multCap + '</span></div>' +
-      '<div class="factor"><span>Growth</span><span class="fval">× ' + fmtMult(r.growth_multiplier) + '</span><span class="cap">' + growthCap + '</span></div>' +
-      '<div class="factor"><span>Maturity</span><span class="fval">× ' + fmtMult(r.maturity_multiplier) + '</span><span class="cap">' + ageCap + '</span></div>' +
-      '<div class="factor"><span>Multi-chain</span><span class="fval">× ' + fmtMult(r.chains_multiplier) + '</span><span class="cap">' + chainCap + '</span></div>' +
+      '<div><span>Intercept</span><span class="cmult"></span><span class="cval">' + r.intercept.toFixed(2) + '</span></div>' +
+      '<div><span>TVL term · ' + r.slope_log_tvl.toFixed(2) + ' × log(TVL)</span><span class="cmult">+ ' + tvlTerm.toFixed(2) + '</span><span class="cval">' + (r.intercept + tvlTerm).toFixed(2) + '</span></div>' +
+      '<div><span>Category effect · ' + esc(r.category || 'Uncategorised') + '</span><span class="cmult">' + effSign + Math.abs(r.category_effect).toFixed(2) + '</span><span class="cval">' + r.fitted_log_mcap.toFixed(2) + '</span></div>' +
+      '<div><span>Implied value · exp(' + r.fitted_log_mcap.toFixed(2) + ')</span><span class="cmult"></span><span class="cval">' + money(r.implied_value_usd) + '</span></div></div>' +
+      '<p class="note">Log values add; the last figure is the model\u2019s exact implied value.</p>' +
+      '<div class="factor"><span>TVL term</span><span class="fval">' + r.slope_log_tvl.toFixed(2) + ' × log(TVL)</span><span class="cap">' + tvlCap + '</span></div>' +
+      '<div class="factor"><span>Category effect</span><span class="fval">' + (r.category_effect >= 0 ? '+' : '') + r.category_effect.toFixed(2) + '</span><span class="cap">' + effectCap + '</span></div>' +
+      '<div class="factor"><span>Left out</span><span class="fval">—</span><span class="cap">' + leftOutCap + '</span></div>' +
       '<h3>Farm plan</h3><ol>' + r.farm_steps.map(function (s) {
         return '<li>' + esc(s).replace(' Cost: ', ' <b>Cost:</b> ').replace(' Time: ', ' <b>Time:</b> ') + '</li>';
       }).join('') + '</ol>' +
