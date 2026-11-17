@@ -78,5 +78,42 @@ td .val { display: block; font-size: 15px; font-weight: 700; font-variant-numeri
 .factor:last-child { border-bottom: 0; }
 .factor .fval { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; }
 .factor .cap { grid-column: 1 / -1; color: var(--muted); font-size: 12px; line-height: 1.5; }
+/* The value as a band, not just a point: the median case stays the headline. */
+.range { color: var(--muted); font-size: 13px; margin: 10px 0 0; border-left: 3px solid var(--amber); padding-left: 10px; }
+/* A thin category, marked where the judge reads the multiples: fewer than five live names. */
+.lowconf { color: var(--red); font-weight: 700; font-size: 12px; }
+/* The spread is one short range: never break it across two lines. */
+#multiples td:nth-child(4) { white-space: nowrap; }
+/* The method, in plain words: four steps, no formula first. */
+#methodBlock h3 { font-size: 15px; color: var(--amber); margin: 14px 0 4px; }
+.method-steps { margin: 8px 0; padding-left: 20px; font-size: 14px; }
+.method-steps li { margin-bottom: 8px; }
+.method-steps li b { color: var(--amber); }
 footer { padding: 0 28px 26px; color: var(--faint); font-size: 13px; }
 @media (max-width: 1000px) { .layout { grid-template-columns: 1fr; } .detail { position: static; } }
+
+/* Phone widths: the board scrolls sideways instead of squeezing its eight columns,
+   the controls stack full-width, and the header wraps. Desktop rendering is untouched. */
+@media (max-width: 700px) {
+  body { font-size: 14px; }
+  .top { flex-wrap: wrap; gap: 8px; padding: 16px 14px 10px; }
+  .top h1 { font-size: 24px; }
+  .meta { white-space: normal; text-align: left; font-size: 12px; }
+  .tabs { padding: 10px 14px 0; overflow-x: auto; }
+  .tab { white-space: nowrap; }
+  .controls { padding: 12px 14px; gap: 8px; }
+  .controls input[type="search"] { flex: 1 1 100%; width: auto; }
+  .controls select { flex: 1 1 40%; min-width: 0; }
+  .count { margin-left: 0; }
+  .layout { padding: 0 12px 16px; gap: 12px; grid-template-columns: minmax(0, 1fr); }
+  .board-wrap { min-width: 0; }
+  .tablewrap { overflow-x: auto; }
+  #board { min-width: 640px; }
+  #liveWrap, #modelWrap { overflow-x: auto; }
+  #live { min-width: 560px; }
+  #multiples { min-width: 720px; }
+  .detail { padding: 14px; }
+  .detail .facts { gap: 8px 10px; }
+  .chain > div { padding: 7px 8px; font-size: 12px; }
+  footer { padding: 0 14px 20px; }
+}

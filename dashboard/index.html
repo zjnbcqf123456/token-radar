@@ -49,22 +49,27 @@
       <tbody id="rows"></tbody>
     </table>
     </div>
-    <p class="note" id="boardNote">Every row records no token in the snapshot. “Records no token” is what the data says — a protocol on this board may still have a token its record does not carry.</p>
+    <p class="note" id="boardNote">Every row records no token in the snapshot. “Records no token” is what the data says — a protocol on this board may still have a token its record does not carry. Each value is TVL × the category’s live median market-cap/TVL, adjusted for growth, age and chains — see the How it scores tab for the method and a worked example.</p>
     <section id="liveWrap" hidden>
       <h2>Live tokens — the market's own values</h2>
       <p class="sub">These protocols already trade. The board never ranks them by a model; their market caps are shown as the market states them.</p>
+      <div class="tablewrap">
       <table id="live">
         <thead><tr><th>Protocol</th><th>Category</th><th>Chains</th><th>TVL</th><th>Market cap</th><th>7d</th></tr></thead>
         <tbody id="liveRows"></tbody>
       </table>
+      </div>
     </section>
     <section id="modelWrap" hidden>
       <h2>How the radar scores</h2>
+      <div id="methodBlock"></div>
       <p id="modelText"></p>
+      <div class="tablewrap">
       <table id="multiples">
-        <thead><tr><th>Category</th><th>Live names</th><th>Category median mcap / TVL</th><th>Winsorised</th><th>Multiple used</th></tr></thead>
+        <thead><tr><th>Category</th><th>Live names</th><th>Category median mcap / TVL</th><th>Middle 50%</th><th>Winsorised</th><th>Multiple used</th><th>Confidence</th></tr></thead>
         <tbody id="multipleRows"></tbody>
       </table>
+      </div>
       <p class="eqn" id="workedExample"></p>
       <p class="note">Multiples come from the snapshot itself: each category's median market-cap-per-TVL over its live protocols, winsorised to 0.02–1.00 and shrunk toward the global median with a pseudo-count of 10, so one live name cannot set its category's price. A category with no live names uses the global median. No protocol name is ever special-cased.</p>
     </section>

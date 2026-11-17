@@ -50,6 +50,19 @@
     var o = document.createElement('option'); o.value = c; o.textContent = c; $('category').appendChild(o);
   });
 
+  // Method in plain words, with live counts: how many categories rest on thin evidence.
+  var thinCats = (R.multiples || []).filter(function (m) { return m.n < 5; }).length;
+  var catCount = (R.multiples || []).length;
+  $('methodBlock').innerHTML =
+    '<h3>How a value is made</h3>' +
+    '<ol class="method-steps">' +
+    '<li><b>Start with TVL</b> — the money actually sitting in the protocol today, from the snapshot.</li>' +
+    '<li><b>Price each dollar of TVL at the going rate for its category</b> — the median market-cap-per-TVL of the live, already-trading protocols in that same category. When a category has few live names, the rate is pulled toward the global median (' + R.global_median.toFixed(3) + '), so a thin category cannot invent a rich price.</li>' +
+    '<li><b>Adjust for what the snapshot says about this protocol</b> — 7-day TVL growth at half weight and clamped, how long it has been tracked (older counts for more), and how many chains it runs on (a little per extra chain).</li>' +
+    '<li><b>The result is the implied value</b> — what the token would be worth if it launched today at its category\u2019s market price. It is a median case, not a promise: the middle half of the category\u2019s live multiples gives the low–high band shown on each protocol.</li></ol>' +
+    '<p class="note">What would change a number: fresh TVL, new live names in the category, another birthday, another chain. Nothing else — no team promises, no social buzz, no hand-written list. ' +
+    thinCats + ' of ' + catCount + ' categories rest on fewer than five live names; the table below marks them Low.</p>';
+
   // Model explainer.
   $('modelText').textContent =
     'Implied value = TVL × category multiple × growth × maturity × chains. The category multiple is the median ' +
@@ -60,8 +73,12 @@
   var mrows = (R.multiples || []).slice().sort(function (a, b) { return b.n - a.n || (a.category < b.category ? -1 : 1); });
   $('multipleRows').innerHTML = mrows.map(function (m) {
     var wins = Math.min(R.model.winsor_high, Math.max(R.model.winsor_low, m.median));
+    // The spread is the middle half of the category's live ratios — shown only where five or
+    // more names make quartiles mean something; fewer than five is flagged Low instead.
+    var spread = m.n >= 5 ? m.q1.toFixed(3) + '–' + m.q3.toFixed(3) : '—';
+    var conf = m.n < 5 ? '<span class="lowconf">Low</span>' : '—';
     return '<tr><td>' + esc(m.category) + '</td><td class="num">' + m.n + '</td><td class="num">' +
-      m.median.toFixed(3) + '</td><td class="num">' + wins.toFixed(3) + '</td><td class="num">' + m.multiple.toFixed(3) + '</td></tr>';
+      m.median.toFixed(3) + '</td><td class="num">' + spread + '</td><td class="num">' + wins.toFixed(3) + '</td><td class="num">' + m.multiple.toFixed(3) + '</td><td>' + conf + '</td></tr>';
   }).join('');
 
   // Worked example, computed live from the top row: the model page shows the same
@@ -160,6 +177,14 @@
       multCap = esc(r.category || 'Uncategorised') + ': live median ' + r.category_median.toFixed(3) + ' over ' + r.multiple_n +
         ' name' + (r.multiple_n === 1 ? '' : 's') + ' → winsorised to ' + wins.toFixed(3) +
         ' → shrunk toward the global median ' + R.global_median.toFixed(3) + ' (pseudo-count ' + R.model.shrink_k + ').';
+      // How much of the applied multiple is this category's own evidence, and how much is the prior.
+      var liveShare = Math.round((r.multiple_n / (r.multiple_n + R.model.shrink_k)) * 100);
+      multCap += ' The applied ' + fmtMult(mult) + ' is ' + liveShare + '% this category and ' + (100 - liveShare) + '% global median.';
+      if (r.multiple_n >= 5) {
+        multCap += ' Live multiples in this category run ' + r.category_q1.toFixed(3) + '–' + r.category_q3.toFixed(3) + ' for the middle half.';
+      } else {
+        multCap += ' Only ' + r.multiple_n + ' live name' + (r.multiple_n === 1 ? '' : 's') + ' back' + (r.multiple_n === 1 ? 's' : '') + ' this multiple — treat the value as a rough estimate, not a precise price.';
+      }
       // How much conservatism the shrinkage adds: the base at the raw median, before any guard.
       if (Math.abs(r.category_median - mult) / mult > 0.05) {
         multCap += ' At the raw median ' + r.category_median.toFixed(3) + ' the base would be ≈ ' +
@@ -182,6 +207,23 @@
       ': +0.03 per extra chain, capped at +0.12.';
     var shownChains = r.chains.slice(0, 4).map(function (c) { return '<span class="pill">' + esc(c) + '</span>'; }).join('') +
       (r.chains.length > 4 ? '<span class="pill">+' + (r.chains.length - 4) + ' more</span>' : '');
+    // Cautions from this row's own record, never from a guess: a sharp TVL fall, or a young
+    // listing, earns a line of its own before the standing no-token note.
+    var warnNotes = [];
+    if (r.change_7d !== null && r.change_7d <= -20) {
+      warnNotes.push('TVL fell ' + Math.abs(r.change_7d).toFixed(1) + '% in the last 7 days — check the protocol is still active before you bridge funds in.');
+    }
+    if (r.age_days !== null && r.age_days < 180) {
+      warnNotes.push('Tracked under 180 days — a new listing: confirm the contracts are the protocol\u2019s own before depositing.');
+    }
+    warnNotes.push('This protocol records no token in the snapshot. That is what the data says, not proof it has none — check its own pages before you farm it.');
+    // The band, not just the point: the value at the category's lower and upper quartiles.
+    var rangeLine = '';
+    if (r.implied_low_usd !== null && r.implied_high_usd !== null && r.implied_low_usd < r.implied_high_usd) {
+      rangeLine = '<p class="range">At the middle half of this category\u2019s live multiples, the value would run ' +
+        money(r.implied_low_usd) + '–' + money(r.implied_high_usd) + ' — ' + money(r.implied_value_usd) +
+        ' above is the median case.</p>';
+    }
     $('detail').innerHTML =
       '<h2>' + esc(r.name) + '</h2>' +
       '<div>' + (r.category ? '<span class="pill">' + esc(r.category) + '</span>' : '') + shownChains +
@@ -196,7 +238,7 @@
       '<h3>Why this value</h3>' +
       '<div class="eqn">' + money(r.tvl_usd) + ' × ' + fmtMult(mult) + ' = ' + money(base) + ' base; × ' +
       fmtMult(r.growth_multiplier) + ' × ' + fmtMult(r.maturity_multiplier) + ' × ' + fmtMult(r.chains_multiplier) +
-      ' = <b>' + money(r.implied_value_usd) + '</b></div>' +
+      ' = <b>' + money(r.implied_value_usd) + '</b></div>' + rangeLine +
       // The audit trail: the running value after each factor, so a reader can re-multiply it.
       '<div class="chain">' +
       '<div><span>Base · TVL × multiple</span><span class="cmult">× ' + fmtMult(mult) + '</span><span class="cval">' + money(base) + '</span></div>' +
@@ -211,7 +253,7 @@
       '<h3>Farm plan</h3><ol>' + r.farm_steps.map(function (s) {
         return '<li>' + esc(s).replace(' Cost: ', ' <b>Cost:</b> ').replace(' Time: ', ' <b>Time:</b> ') + '</li>';
       }).join('') + '</ol>' +
-      '<p class="warn">This protocol records no token in the snapshot. That is what the data says, not proof it has none — check its own pages before you farm it.</p>';
+      '<p class="warn">' + warnNotes.map(esc).join(' ') + '</p>';
     render();
   }
 

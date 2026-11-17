@@ -26,6 +26,10 @@
 // the pseudo-count is 10, so one live name moves its category only a little from the market.
 // A category's top rows after this are the ones with genuinely large TVLs, not an artefact.
 //
+// The dashboard also shows, for each multiple, how many live names it rests on and the middle
+// half of their ratios, and for each row the value at the category's lower and upper quartiles.
+// Those are display only: the model still prices off the median, and no board value changes.
+//
 // The constants are the model's, stated in the dashboard. No protocol name is ever special-cased:
 // the same function scores every row.
 
@@ -94,6 +98,9 @@ export interface CategoryMultiple {
   median: number;
   /** How many live protocols the median rests on. */
   n: number;
+  /** The middle half of the category's live ratios: the 25th and 75th percentiles. Display only: the model prices off the median, never off these. */
+  q1: number;
+  q3: number;
 }
 
 /** The market's own pricing, computed once from the snapshot. */
@@ -137,6 +144,16 @@ export function ageDays(asOf: string, listedAt: string | null): number | null {
   return Math.max(0, Math.floor((a - b) / DAY_MS));
 }
 
+/** A percentile of a sorted list, linearly interpolated. */
+function quantile(sorted: number[], p: number): number {
+  if (sorted.length === 1) return sorted[0]!;
+  const pos = (sorted.length - 1) * p;
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  if (lo === hi) return sorted[lo]!;
+  return sorted[lo]! + (sorted[hi]! - sorted[lo]!) * (pos - lo);
+}
+
 /**
  * The market's pricing out of the snapshot: every live protocol (a token that trades, a market
  * cap and a TVL above zero, exchanges left out) contributes its market-cap-per-TVL. The global
@@ -159,9 +176,10 @@ export function categoryMultiples(snapshot: Snapshot, model: ModelConstants = MO
   const by_category = new Map<string, CategoryMultiple>();
   for (const [key, list] of byCategory) {
     const raw = median(list);
+    const sorted = [...list].sort((a, b) => a - b);
     const winsorised = Math.min(model.winsor_high, Math.max(model.winsor_low, raw));
     const multiple = (list.length * winsorised + model.shrink_k * global) / (list.length + model.shrink_k);
-    by_category.set(key, { multiple, median: raw, n: list.length });
+    by_category.set(key, { multiple, median: raw, n: list.length, q1: quantile(sorted, 0.25), q3: quantile(sorted, 0.75) });
   }
   return { global_median: global, by_category, live_count: live.length };
 }
@@ -170,7 +188,7 @@ export function categoryMultiples(snapshot: Snapshot, model: ModelConstants = MO
 export function multipleFor(category: string | null, stats: ModelStats): CategoryMultiple {
   const hit = category === null ? undefined : stats.by_category.get(category);
   if (hit !== undefined) return hit;
-  return { multiple: stats.global_median, median: stats.global_median, n: 0 };
+  return { multiple: stats.global_median, median: stats.global_median, n: 0, q1: stats.global_median, q3: stats.global_median };
 }
 
 /** The three multipliers and the implied value one protocol gets under `model`. */
@@ -184,6 +202,11 @@ export function impliedValue(
   multiple: number;
   multiple_n: number;
   category_median: number;
+  category_q1: number;
+  category_q3: number;
+  /** The value at the category's lower- and upper-quartile multiples, same other factors. Null where the category has fewer than five live names: quartiles of that few points would pretend a precision the data does not have. */
+  implied_low: number | null;
+  implied_high: number | null;
   growthPct: number;
   growthMult: number;
   maturityMult: number;
@@ -191,7 +214,7 @@ export function impliedValue(
   age: number | null;
 } {
   const age = ageDays(asOf, protocol.listed_at);
-  const { multiple, median: categoryMedian, n } = multipleFor(protocol.category, stats);
+  const { multiple, median: categoryMedian, n, q1, q3 } = multipleFor(protocol.category, stats);
   const rawGrowth = finite(protocol.change_7d, 0);
   const growthPct = Math.min(model.growth_cap, Math.max(model.growth_floor, rawGrowth));
   const growthMult = 1 + (growthPct / 100) * model.growth_weight;
@@ -203,7 +226,17 @@ export function impliedValue(
   const chainsMult = 1 + Math.min(model.chains_max_bonus, extraChains * model.chains_step);
   const base = protocol.tvl_usd * multiple;
   const implied = Math.max(1, Math.round(base * growthMult * maturityMult * chainsMult));
-  return { implied, multiple, multiple_n: n, category_median: categoryMedian, growthPct, growthMult, maturityMult, chainsMult, age };
+  // The range runs the same shrinkage the point estimate runs, with the quartile in place of
+  // the median — so the band is the model's own uncertainty, not a second model.
+  const shrunk = (v: number): number => {
+    const w = Math.min(model.winsor_high, Math.max(model.winsor_low, v));
+    return (n * w + model.shrink_k * stats.global_median) / (n + model.shrink_k);
+  };
+  const impliedLow =
+    n >= 5 ? Math.max(1, Math.round(protocol.tvl_usd * shrunk(q1) * growthMult * maturityMult * chainsMult)) : null;
+  const impliedHigh =
+    n >= 5 ? Math.max(1, Math.round(protocol.tvl_usd * shrunk(q3) * growthMult * maturityMult * chainsMult)) : null;
+  return { implied, multiple, multiple_n: n, category_median: categoryMedian, category_q1: q1, category_q3: q3, implied_low: impliedLow, implied_high: impliedHigh, growthPct, growthMult, maturityMult, chainsMult, age };
 }
 
 /** DefiLlama's version-marker rule: a name ending in a release is a pool of another protocol. */
@@ -261,6 +294,10 @@ export interface BoardRow {
     multiple: number;
     multiple_n: number;
     category_median: number;
+    category_q1: number;
+    category_q3: number;
+    implied_low_usd: number | null;
+    implied_high_usd: number | null;
     growth_pct: number;
     growth_multiplier: number;
     maturity_multiplier: number;
@@ -285,6 +322,10 @@ export interface RadarRow {
   multiple: number;
   multiple_n: number;
   category_median: number;
+  category_q1: number;
+  category_q3: number;
+  implied_low_usd: number | null;
+  implied_high_usd: number | null;
   growth_pct: number;
   growth_multiplier: number;
   maturity_multiplier: number;
@@ -317,7 +358,7 @@ export interface RadarData {
   /** The watchlist's slugs, so the page can mark them. */
   watchlist: string[];
   /** One row per category with live protocols: its median and the multiple used. */
-  multiples: { category: string; n: number; median: number; multiple: number }[];
+  multiples: { category: string; n: number; median: number; q1: number; q3: number; multiple: number }[];
   rows: RadarRow[];
   live: LiveRow[];
 }
@@ -371,13 +412,17 @@ export function buildBoard(
       multiple: round4(s.v.multiple),
       multiple_n: s.v.multiple_n,
       category_median: round4(s.v.category_median),
+      category_q1: round4(s.v.category_q1),
+      category_q3: round4(s.v.category_q3),
+      implied_low_usd: s.v.implied_low,
+      implied_high_usd: s.v.implied_high,
       growth_pct: s.v.growthPct,
       growth_multiplier: round4(s.v.growthMult),
       maturity_multiplier: round4(s.v.maturityMult),
       chains_multiplier: round4(s.v.chainsMult),
       age_days: s.v.age,
     },
-    farm_steps: farmSteps(s.p, s.v.age).map(stepText),
+    farm_steps: farmSteps(s.p, s.v.age, s.v.implied).map(stepText),
   }));
 }
 
@@ -431,16 +476,57 @@ function actionFor(p: SnapshotProtocol, capital: number, chain: string): string 
   return `Deposit $${capital} of USDC into ${name} on ${chain} and keep the position open.`;
 }
 
+/** The week's qualifying actions for the category, in the farmer's own terms. */
+function weeklyFor(p: SnapshotProtocol): string {
+  const c = (p.category ?? '').toLowerCase();
+  if (c.includes('lend') || c.includes('cdp') || c.includes('collateral')) return 'a supply top-up, a borrow, a repay or a vote';
+  if (c.includes('dex') || c.includes('amm') || c.includes('liquidity')) return 'a swap, adding liquidity or a vote';
+  if (c.includes('bridge')) return 'a bridge, a swap or a vote';
+  if (c.includes('staking') || c.includes('restak')) return 'a stake top-up, a rewards claim or a vote';
+  if (c.includes('perpetual') || c.includes('derivative') || c.includes('options')) return 'a small hedged trade, a margin top-up or a vote';
+  if (c.includes('prediction')) return 'a market position or a vote';
+  if (c.includes('curator') || c.includes('allocator') || c.includes('vault')) return 'a deposit, a rebalance check or a vote';
+  if (c.includes('stable')) return 'a mint, a deposit or a vote';
+  if (c.includes('rwa')) return 'a mint, a hold check or a vote';
+  if (c.includes('insurance')) return 'a cover check, a claim or a vote';
+  if (c.includes('yield') || c.includes('farm') || c.includes('leveraged')) return 'a deposit, a yield claim or a vote';
+  if (c.includes('launchpad')) return 'a launch check, an allocation or a vote';
+  if (c.includes('basis')) return 'a hedge rebalance, a funding-rate check or a vote';
+  if (c === 'chain') return 'a transaction, a stake or a vote';
+  return 'a deposit, a borrow, a swap or a vote';
+}
+
+/** A short dollar figure in the dashboard's own style: $766.0M, $4.6M, $842.0K. */
+function fmtUsd(n: number): string {
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `$${(n / 1e3).toFixed(1)}K`;
+  return `$${Math.round(n)}`;
+}
+
 /**
  * A protocol's farm plan: six steps, each an action with a cost and a time. The plan is derived
- * from the protocol's own record (category, chains, TVL, age), never from a hand-written list of names.
+ * from the protocol's own record (category, chains, TVL, age, 7-day move, implied value), never
+ * from a hand-written list of names. Each step states what to do first, what it costs and how
+ * long it takes; nothing in it is a promised return — the plan buys eligibility for a future
+ * token, and the implied value above is the size of the prize it points at, not a share of it.
  */
-export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
+export function farmSteps(p: SnapshotProtocol, age: number | null, implied: number): FarmStep[] {
   const chain = chainOf(p);
   const capital = capitalFor(p);
   const hold = holdDaysFor(age);
   const action = actionFor(p, capital, chain);
   const gas = capital >= 150 ? 8 : 4;
+  // The bridge action moves the funds itself, so it needs no bridging first; every other
+  // action needs the capital sitting on the chain before it starts.
+  const isBridge = (p.category ?? '').toLowerCase().includes('bridge');
+  const setup = isBridge ? action : `${action} Have the $${capital} on ${chain} first — bridge it in if it sits elsewhere.`;
+  const trend =
+    p.change_7d === null
+      ? ''
+      : p.change_7d === 0
+        ? ' TVL is flat over the last 7 days.'
+        : ` TVL is ${p.change_7d > 0 ? 'up' : 'down'} ${Math.abs(p.change_7d).toFixed(1)}% over the last 7 days.`;
   return [
     {
       text: `Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.`,
@@ -448,17 +534,17 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
       time: '5 minutes',
     },
     {
-      text: action,
+      text: setup,
       cost: `$${capital} of capital and about $${gas} of gas`,
       time: '15 minutes to set up',
     },
     {
-      text: `Make one qualifying action each week on ${chain}, such as a deposit, a borrow, a swap or a vote.`,
+      text: `Make one qualifying action each week on ${chain}, such as ${weeklyFor(p)}. Confirm on the protocol's own pages which actions earn points — only those count.`,
       cost: 'about $2 of gas a week',
       time: '10 minutes a week',
     },
     {
-      text: `Hold the position for at least ${hold} days so the activity is counted in more than one snapshot.`,
+      text: `Hold the position for at least ${hold} days so the activity is counted in more than one snapshot.${trend} If TVL drops 20% or more in a week, check the protocol is still active before you add more.`,
       cost: `the $${capital} stays in the position`,
       time: `${hold} days`,
     },
@@ -468,7 +554,7 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
       time: '10 minutes',
     },
     {
-      text: `Write the wallet, the dates and every transaction in a farm log so you can repeat the position or unwind it.`,
+      text: `Write the wallet, the dates and every transaction in a farm log so you can repeat the position or unwind it. The prize this plan points at is the implied value above — ${fmtUsd(implied)} at today's TVL — and the plan buys eligibility for it, not a share of it.`,
       cost: 'nothing but the log',
       time: '5 minutes',
     },
@@ -508,6 +594,10 @@ export function radarRow(row: BoardRow): RadarRow {
     multiple: row.model.multiple,
     multiple_n: row.model.multiple_n,
     category_median: row.model.category_median,
+    category_q1: row.model.category_q1,
+    category_q3: row.model.category_q3,
+    implied_low_usd: row.model.implied_low_usd,
+    implied_high_usd: row.model.implied_high_usd,
     growth_pct: row.model.growth_pct,
     growth_multiplier: row.model.growth_multiplier,
     maturity_multiplier: row.model.maturity_multiplier,
@@ -539,6 +629,8 @@ export function buildRadar(
       category,
       n: m.n,
       median: round4(m.median),
+      q1: round4(m.q1),
+      q3: round4(m.q3),
       multiple: round4(m.multiple),
     })),
     rows: board.map(radarRow),
